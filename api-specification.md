@@ -556,7 +556,7 @@ The request parameters for the tax estimation endpoint are identical to the chec
 
 ### Error Response Format
 
-All error responses follow this format:
+API error responses follow this format:
 
 ```json
 {
@@ -577,7 +577,7 @@ All error responses follow this format:
 
 The response includes:
 - `status`: Contains the main error code and a general message
-- `errors`: An array of specific validation errors (when applicable)
+- `errors`: An array of specific validation errors (included only for request validation errors)
 - `requestId`: A unique identifier for the request that can be used when contacting support
 
 ### Common Error Codes
@@ -587,11 +587,7 @@ The response includes:
 | AUTHENTICATION_FAILED | The provided authentication signature is invalid |
 | INVALID_REQUEST | The request format is invalid or missing required fields |
 | PAYMENT_FAILED | The payment could not be processed |
-| PAYMENT_DECLINED | The payment was declined by the payment processor |
-| INSUFFICIENT_FUNDS | The payment method has insufficient funds |
-| INVALID_CARD | The provided card information is invalid |
-| EXPIRED_CARD | The provided card has expired |
-| ADDRESS_VERIFICATION_FAILED | The address verification check failed |
+| PAYMENT_CANCELLED | The user cancelled the payment process |
 | TAX_CALCULATION_ERROR | Unable to calculate taxes for the given items/address |
 | INVALID_DISCOUNT | The discount code is invalid or expired |
 | PRODUCT_UNAVAILABLE | One or more products in the cart are unavailable |
@@ -607,20 +603,13 @@ The response includes:
 | INVALID_VALUE | The field value is invalid |
 | OUT_OF_RANGE | The field value is outside of acceptable range |
 
-#### Example Response (Error)
+#### Example Payment Error Response
 ```json
 {
   "status": {
     "code": "PAYMENT_FAILED",
-    "message": "The payment could not be processed. Please check your payment details and try again."
+    "message": "The payment could not be processed. Please try again or use a different payment method."
   },
-  "errors": [
-    {
-      "field": "payment_method.card.number",
-      "code": "INVALID_CARD",
-      "message": "The card number provided is invalid or not supported."
-    }
-  ],
   "requestId": "req-7891011-abcd-efgh-1234"
 }
 ```
