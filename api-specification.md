@@ -1,0 +1,702 @@
+# API Technical Specification
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [API Flow](#api-flow)
+   - [Checkout Flow Diagram](#checkout-flow-diagram)
+   - [Flow Description](#flow-description)
+   - [Typical Implementation Example](#typical-implementation-example)
+3. [Base URL](#base-url)
+4. [Authentication](#authentication)
+5. [Security](#security)
+6. [API Endpoints](#api-endpoints)
+   - [1. Process Checkout](#1-process-checkout)
+   - [2. Calculate Tax Estimate](#2-calculate-tax-estimate)
+7. [Error Handling](#error-handling)
+   - [HTTP Status Codes](#http-status-codes)
+   - [Error Response Format](#error-response-format)
+   - [Common Error Codes](#common-error-codes)
+8. [Rate Limiting](#rate-limiting)
+9. [Versioning](#versioning)
+10. [Data Types and Formats](#data-types-and-formats)
+11. [Testing](#testing)
+12. [Support and Contact Information](#support-and-contact-information)
+13. [Changelog](#changelog)
+
+## Overview
+This document outlines the technical specifications for a payment processing API, which includes endpoints for checkout processing and tax calculation. The API follows RESTful principles and is designed to be secure, reliable, and efficient.
+
+## API Flow
+
+### Checkout Flow Diagram
+
+The following diagram illustrates how the two endpoints interact in a typical checkout flow:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API Server
+    participant User
+    participant Checkout as Checkout System
+    
+    Client->>API: 1. POST /calculate-tax-estimate
+    API->>Client: Return tax calculation
+    Note over Client: Client shows cart with tax estimates
+    
+    Client->>API: 2. POST /checkout
+    API->>Client: Return checkout URL
+    
+    Client->>User: 3. Redirect to checkout URL
+    User->>Checkout: 4. Proceed through checkout process
+    
+    alt Successful Payment
+        Checkout->>User: 5a. Redirect to successReturnUrl
+    else Failed Payment
+        Checkout->>User: 5b. Redirect to failureReturnUrl
+    end
+    
+    User->>Client: Return to client application
+```
+
+### Flow Description
+
+1. **Tax Calculation**: The client first makes a POST request to `/calculate-tax-estimate` with the cart information to get accurate tax estimates.
+
+2. **Initiate Checkout**: The client then makes a POST request to `/checkout` with the same information. If successful, the API returns a response that includes a checkout URL.
+
+3. **Redirect User**: The client redirects the user to the checkout URL where they will complete the payment process.
+
+4. **Checkout Process**: The user proceeds through the checkout process hosted by the payment system.
+
+5. **Completion and Return**: 
+   - If the payment is successful, the user is redirected to the `successReturnUrl` provided in the initial request.
+   - If the payment fails, the user is redirected to the `failureReturnUrl`.
+
+This flow allows the client application to:
+- Get accurate tax estimates before initiating checkout
+- Provide a seamless handoff to the payment system
+- Handle both successful and failed payment scenarios
+- Return users to the appropriate page in the client application after checkout
+
+### Typical Implementation Example
+
+```javascript
+// Example client-side implementation
+async function processCheckout(cartData) {
+  try {
+    // Step 1: Calculate taxes
+    const taxEstimateResponse = await fetch('https://api.example.com/v1/calculate-tax-estimate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Mor-Signature': generateSignature(cartData, SIGNING_KEY)
+      },
+      body: JSON.stringify(cartData)
+    });
+    
+    const taxEstimate = await taxEstimateResponse.json();
+    
+    // Display tax estimates to the user
+    updateCartDisplay(taxEstimate);
+    
+    // Step 2: If user confirms, proceed with checkout
+    if (userConfirmsCheckout()) {
+      const checkoutResponse = await fetch('https://api.example.com/v1/checkout', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Mor-Signature': generateSignature(cartData, SIGNING_KEY)
+        },
+        body: JSON.stringify(cartData)
+      });
+      
+      const checkoutResult = await checkoutResponse.json();
+      
+      // Step 3: Redirect user to checkout page
+      if (checkoutResult.status.code === 'PAYMENT_INITIATED') {
+        window.location.href = checkoutResult.checkoutUrl;
+      } else {
+        displayError(checkoutResult.errors);
+      }
+    }
+  } catch (error) {
+    console.error('Checkout process failed:', error);
+    displayError({ message: 'An unexpected error occurred during checkout.' });
+  }
+}
+
+// Helper function to generate HMAC-SHA256 signature
+function generateSignature(data, key) {
+  const jsonString = JSON.stringify(data);
+  // In a real implementation, create an HMAC-SHA256 hash of the string using the key
+  return hmacSha256(jsonString, key);
+}
+```
+
+After the checkout process completes, the user will be redirected to one of the URLs specified in the `configuration` object:
+- `successReturnUrl`: If payment was successful
+- `failureReturnUrl`: If payment failed
+
+The client application should be prepared to handle both scenarios, typically by checking for status parameters in the redirect URL.
+
+## Base URL
+```
+https://api.example.com/v1
+```
+
+## Authentication
+All API requests require authentication using the `X-Mor-Signature` header. This header should contain an HMAC-SHA256 hash of the request body, created using a signing key that will be provided to the caller.
+
+### Creating the Signature
+1. Take the entire request body as a JSON string
+2. Create an HMAC-SHA256 hash of this string using your provided signing key
+3. Include this hash in the `X-Mor-Signature` header
+
+Example (using pseudo-code):
+```
+requestBody = JSON.stringify(requestData);
+signature = HMAC-SHA256(requestBody, signingKey);
+headers['X-Mor-Signature'] = signature;
+```
+
+## Security
+- All API requests must use HTTPS/SSL protocol
+- TLS 1.2 or higher is required
+- Request data is encrypted in transit
+- API keys should be stored securely and never exposed in client-side code
+- Requests without proper authentication will receive a 401 Unauthorized response
+
+## API Endpoints
+
+### 1. Process Checkout
+
+**Endpoint:** `/checkout`  
+**Method:** `POST`  
+**Content-Type:** `application/json`
+
+This endpoint processes checkout operations, including payment processing and order creation.
+
+#### Request Parameters
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| cartInformation | object | Yes | Information about cart contents |
+| cartInformation.lineItems | array | Yes | Array of items in the cart |
+| cartInformation.lineItems[].sku | string | Yes | Product SKU identifier |
+| cartInformation.lineItems[].price | number | Yes | Price per unit |
+| cartInformation.lineItems[].quantity | integer | Yes | Quantity of the product |
+| cartInformation.lineItems[].description | string | Yes | Product description |
+| cartInformation.lineItems[].discounts | array | No | Discounts applied to the specific item |
+| cartInformation.lineItems[].discounts[].discountId | string | Yes | Unique discount identifier |
+| cartInformation.lineItems[].discounts[].description | string | Yes | Description of the discount |
+| cartInformation.lineItems[].discounts[].type | string | Yes | Type of discount (e.g., "percentage", "fixed") |
+| cartInformation.lineItems[].discounts[].value | number | Yes | Discount value (percentage or fixed amount) |
+| orderDiscounts | array | No | Discounts applied to the entire order |
+| orderDiscounts[].discountId | string | Yes | Unique discount identifier |
+| orderDiscounts[].description | string | Yes | Description of the discount |
+| orderDiscounts[].type | string | Yes | Type of discount (e.g., "percentage", "fixed") |
+| orderDiscounts[].value | number | Yes | Discount value (percentage or fixed amount) |
+| shippingAddress | object | Yes | Shipping address information |
+| shippingAddress.firstName | string | Yes | First name for shipping |
+| shippingAddress.lastName | string | Yes | Last name for shipping |
+| shippingAddress.addressLine1 | string | Yes | Primary street address |
+| shippingAddress.addressLine2 | string | No | Secondary address information (apt, suite, etc.) |
+| shippingAddress.city | string | Yes | City |
+| shippingAddress.state | string | Yes | State or province |
+| shippingAddress.postalCode | string | Yes | ZIP or postal code |
+| shippingAddress.country | string | Yes | Country |
+| shippingAddress.phone | string | Yes | Phone number |
+| billingAddress | object | Yes | Billing address information |
+| billingAddress.sameAsShipping | boolean | No | Whether billing address is the same as shipping |
+| billingAddress.firstName | string | Yes (if not sameAsShipping) | First name for billing |
+| billingAddress.lastName | string | Yes (if not sameAsShipping) | Last name for billing |
+| billingAddress.addressLine1 | string | Yes (if not sameAsShipping) | Primary street address |
+| billingAddress.addressLine2 | string | No | Secondary address information (apt, suite, etc.) |
+| billingAddress.city | string | Yes (if not sameAsShipping) | City |
+| billingAddress.state | string | Yes (if not sameAsShipping) | State or province |
+| billingAddress.postalCode | string | Yes (if not sameAsShipping) | ZIP or postal code |
+| billingAddress.country | string | Yes (if not sameAsShipping) | Country |
+| billingAddress.phone | string | Yes (if not sameAsShipping) | Phone number |
+| email | string | Yes | Customer email address |
+| renewal | object | No | Information for renewal purchases |
+| renewal.originalPurchaseDate | string | Yes (if renewal) | Date of original purchase (YYYY-MM-DD) |
+| renewal.originalTransactionId | string | Yes (if renewal) | Transaction ID of original purchase |
+| existingClientId | string | No | Client ID if customer already exists in system |
+| configuration | object | Yes | Additional checkout configuration |
+| configuration.successReturnUrl | string | Yes | URL to redirect after successful checkout |
+| configuration.failureReturnUrl | string | Yes | URL to redirect after failed checkout |
+| configuration.allowUserDiscountCodes | boolean | No | Whether to allow user-entered discount codes |
+
+#### Example Request
+```json
+{
+  "cartInformation": {
+    "lineItems": [
+      {
+        "sku": "PROD-123",
+        "price": 199.99,
+        "quantity": 2,
+        "description": "1 Year Annual License",
+        "discounts": [
+          {
+            "discountId": "ITEM-10OFF",
+            "description": "10% off",
+            "type": "percentage",
+            "value": 10
+          }
+        ]
+      },
+      {
+        "sku": "PROD-456",
+        "price": 29.99,
+        "quantity": 1,
+        "description": "1 Year Support",
+        "discounts": []
+      }
+    ]
+  },
+  "orderDiscounts": [
+    {
+      "discountId": "GOODCUSTOMER",
+      "description": "$100 Off Entire Order",
+      "type": "fixed",
+      "value": 100.00
+    }
+  ],
+  "shippingAddress": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "addressLine1": "123 Main Street",
+    "addressLine2": "Apt 4B",
+    "city": "Boston",
+    "state": "MA",
+    "postalCode": "02108",
+    "country": "USA",
+    "phone": "555-123-4567"
+  },
+  "billingAddress": {
+    "sameAsShipping": true,
+    "firstName": "John",
+    "lastName": "Doe",
+    "addressLine1": "123 Main Street",
+    "addressLine2": "Apt 4B",
+    "city": "Boston",
+    "state": "MA", 
+    "postalCode": "02108",
+    "country": "USA",
+    "phone": "555-123-4567"
+  },
+  "email": "john.doe@example.com",
+  "renewal": {
+    "originalPurchaseDate": "2024-03-17",
+    "originalTransactionId": "xxxxxxxxxxx1234"
+  },
+  "existingClientId": "CID-98765",
+  "configuration": {
+    "successReturnUrl": "https://zf.com/checkout/success",
+    "failureReturnUrl": "https://zf.com/checkout/failure",
+    "allowUserDiscountCodes": true
+  }
+}
+```
+
+#### Response Parameters
+
+| Field | Type | Description |
+|-------|------|-------------|
+| status | object | Status information for the checkout |
+| status.code | string | Status code (e.g., "PAYMENT_SUCCEEDED") |
+| status.message | string | Human-readable status message |
+| merchantOfRecord | object | Merchant of record information |
+| merchantOfRecord.customerId | string | Unique customer identifier in MOR system |
+| merchantOfRecord.transactionId | string | Unique transaction identifier |
+| merchantOfRecord.paymentId | string | Unique payment identifier |
+| financials | object | Financial details of the transaction |
+| financials.totalTaxCharged | number | Total tax amount charged |
+| financials.lineItemTotals | array | Financial details for each line item |
+| financials.lineItemTotals[].sku | string | Product SKU |
+| financials.lineItemTotals[].subtotal | number | Subtotal for this line item |
+| financials.lineItemTotals[].discount | number | Discount amount for this line item |
+| financials.lineItemTotals[].total | number | Total amount for this line item after discounts |
+| payment | object | Payment method details |
+| payment.method | string | Payment method used (e.g., "CREDIT_CARD") |
+| payment.cardType | string | Type of card used (if applicable) |
+| payment.lastFourDigits | string | Last 4 digits of the card (if applicable) |
+| payment.expiryDate | string | Expiration date of the card (MM/YY) |
+| payment.billingZip | string | Billing postal code |
+| error | object | Only present if an error occurred |
+| error.code | string | Error code |
+| error.message | string | Error message |
+
+#### Example Response (Success)
+```json
+{
+  "status": {
+    "code": "PAYMENT_SUCCEEDED",
+    "message": "Payment was processed successfully"
+  },
+  "merchantOfRecord": {
+    "customerId": "MOR-10042857",
+    "transactionId": "TXN-98765432",
+    "paymentId": "PAY-2023-03-17-001"
+  },
+  "financials": {
+    "totalTaxCharged": 8.75,
+    "lineItemTotals": [
+      {
+        "sku": "PROD-123",
+        "subtotal": 199.99,
+        "discount": 10.00,
+        "total": 189.99
+      },
+      {
+        "sku": "PROD-456",
+        "subtotal": 29.99,
+        "discount": 0.00,
+        "total": 29.99
+      }
+    ]
+  },
+  "payment": {
+    "method": "CREDIT_CARD",
+    "cardType": "VISA",
+    "lastFourDigits": "4242",
+    "expiryDate": "05/26",
+    "billingZip": "02108"
+  }
+}
+```
+
+### 2. Calculate Tax Estimate
+
+**Endpoint:** `/calculate-tax-estimate`  
+**Method:** `POST`  
+**Content-Type:** `application/json`
+
+This endpoint calculates tax estimates for a given set of items and location.
+
+#### Request Parameters
+
+The request parameters for the tax estimation endpoint are identical to the checkout endpoint. This ensures consistency and allows for tax estimation before finalizing the checkout.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| cartInformation | object | Yes | Information about cart contents |
+| cartInformation.lineItems | array | Yes | Array of items in the cart |
+| cartInformation.lineItems[].sku | string | Yes | Product SKU identifier |
+| cartInformation.lineItems[].price | number | Yes | Price per unit |
+| cartInformation.lineItems[].quantity | integer | Yes | Quantity of the product |
+| cartInformation.lineItems[].description | string | Yes | Product description |
+| cartInformation.lineItems[].discounts | array | No | Discounts applied to the specific item |
+| cartInformation.lineItems[].discounts[].discountId | string | Yes | Unique discount identifier |
+| cartInformation.lineItems[].discounts[].description | string | Yes | Description of the discount |
+| cartInformation.lineItems[].discounts[].type | string | Yes | Type of discount (e.g., "percentage", "fixed") |
+| cartInformation.lineItems[].discounts[].value | number | Yes | Discount value (percentage or fixed amount) |
+| orderDiscounts | array | No | Discounts applied to the entire order |
+| orderDiscounts[].discountId | string | Yes | Unique discount identifier |
+| orderDiscounts[].description | string | Yes | Description of the discount |
+| orderDiscounts[].type | string | Yes | Type of discount (e.g., "percentage", "fixed") |
+| orderDiscounts[].value | number | Yes | Discount value (percentage or fixed amount) |
+| shippingAddress | object | Yes | Shipping address information |
+| shippingAddress.firstName | string | Yes | First name for shipping |
+| shippingAddress.lastName | string | Yes | Last name for shipping |
+| shippingAddress.addressLine1 | string | Yes | Primary street address |
+| shippingAddress.addressLine2 | string | No | Secondary address information (apt, suite, etc.) |
+| shippingAddress.city | string | Yes | City |
+| shippingAddress.state | string | Yes | State or province |
+| shippingAddress.postalCode | string | Yes | ZIP or postal code |
+| shippingAddress.country | string | Yes | Country |
+| shippingAddress.phone | string | Yes | Phone number |
+| billingAddress | object | Yes | Billing address information |
+| billingAddress.sameAsShipping | boolean | No | Whether billing address is the same as shipping |
+| billingAddress.firstName | string | Yes (if not sameAsShipping) | First name for billing |
+| billingAddress.lastName | string | Yes (if not sameAsShipping) | Last name for billing |
+| billingAddress.addressLine1 | string | Yes (if not sameAsShipping) | Primary street address |
+| billingAddress.addressLine2 | string | No | Secondary address information (apt, suite, etc.) |
+| billingAddress.city | string | Yes (if not sameAsShipping) | City |
+| billingAddress.state | string | Yes (if not sameAsShipping) | State or province |
+| billingAddress.postalCode | string | Yes (if not sameAsShipping) | ZIP or postal code |
+| billingAddress.country | string | Yes (if not sameAsShipping) | Country |
+| billingAddress.phone | string | Yes (if not sameAsShipping) | Phone number |
+| email | string | Yes | Customer email address |
+| renewal | object | No | Information for renewal purchases |
+| renewal.originalPurchaseDate | string | Yes (if renewal) | Date of original purchase (YYYY-MM-DD) |
+| renewal.originalTransactionId | string | Yes (if renewal) | Transaction ID of original purchase |
+| existingClientId | string | No | Client ID if customer already exists in system |
+| configuration | object | Yes | Additional checkout configuration |
+| configuration.successReturnUrl | string | Yes | URL to redirect after successful checkout |
+| configuration.failureReturnUrl | string | Yes | URL to redirect after failed checkout |
+
+#### Example Request
+```json
+{
+  "cartInformation": {
+    "lineItems": [
+      {
+        "sku": "PROD-123",
+        "price": 199.99,
+        "quantity": 2,
+        "description": "1 Year Annual License",
+        "discounts": [
+          {
+            "discountId": "ITEM-10OFF",
+            "description": "10% off",
+            "type": "percentage",
+            "value": 10
+          }
+        ]
+      },
+      {
+        "sku": "PROD-456",
+        "price": 29.99,
+        "quantity": 1,
+        "description": "1 Year Support",
+        "discounts": []
+      }
+    ]
+  },
+  "orderDiscounts": [
+    {
+      "discountId": "GOODCUSTOMER",
+      "description": "$100 Off Entire Order",
+      "type": "fixed",
+      "value": 100.00
+    }
+  ],
+  "shippingAddress": {
+    "firstName": "John",
+    "lastName": "Doe",
+    "addressLine1": "123 Main Street",
+    "addressLine2": "Apt 4B",
+    "city": "Boston",
+    "state": "MA",
+    "postalCode": "02108",
+    "country": "USA",
+    "phone": "555-123-4567"
+  },
+  "billingAddress": {
+    "sameAsShipping": true,
+    "firstName": "John",
+    "lastName": "Doe",
+    "addressLine1": "123 Main Street",
+    "addressLine2": "Apt 4B",
+    "city": "Boston",
+    "state": "MA", 
+    "postalCode": "02108",
+    "country": "USA",
+    "phone": "555-123-4567"
+  },
+  "email": "john.doe@example.com",
+  "renewal": {
+    "originalPurchaseDate": "2024-03-17",
+    "originalTransactionId": "xxxxxxxxxxx1234"
+  },
+  "existingClientId": "CID-98765",
+  "configuration": {
+    "successReturnUrl": "https://zf.com/checkout/success",
+    "failureReturnUrl": "https://zf.com/checkout/failure"
+  }
+}
+```
+
+#### Response Parameters
+
+| Field | Type | Description |
+|-------|------|-------------|
+| financials | object | Financial details including tax information |
+| financials.totalTaxCharged | number | Total tax amount |
+| financials.lineItemTotals | array | Financial details for each line item |
+| financials.lineItemTotals[].sku | string | Product SKU |
+| financials.lineItemTotals[].subtotal | number | Subtotal for this line item |
+| financials.lineItemTotals[].tax | number | Tax amount for this line item |
+| financials.lineItemTotals[].discount | number | Discount amount for this line item |
+| financials.lineItemTotals[].total | number | Total amount for this line item (including tax, after discounts) |
+
+#### Example Response
+```json
+{
+   "financials": {
+    "totalTaxCharged": 8.75,
+    "lineItemTotals": [
+      {
+        "sku": "PROD-123",
+        "subtotal": 199.99,
+        "tax": 5.00,
+        "discount": 10.00,
+        "total": 194.99
+      },
+      {
+        "sku": "PROD-456",
+        "subtotal": 29.99,
+        "tax": 3.75,
+        "discount": 0.00,
+        "total": 33.74
+      }
+    ]
+  }
+}
+```
+
+## Error Handling
+
+### HTTP Status Codes
+
+| Status Code | Description |
+|-------------|-------------|
+| 200 | OK - The request was successful |
+| 400 | Bad Request - The request was invalid or cannot be processed |
+| 401 | Unauthorized - Authentication failed or was not provided |
+| 403 | Forbidden - The authenticated user does not have permission |
+| 404 | Not Found - The requested resource does not exist |
+| 422 | Unprocessable Entity - The request was well-formed but cannot be processed |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error - An error occurred on the server |
+| 503 | Service Unavailable - The service is temporarily unavailable |
+
+### Error Response Format
+
+All error responses follow this format:
+
+```json
+{
+  "status": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message"
+  },
+  "errors": [
+    {
+      "field": "fieldName",
+      "code": "FIELD_ERROR_CODE",
+      "message": "Specific field error message"
+    }
+  ],
+  "requestId": "req-uuid-1234-5678-abcd"
+}
+```
+
+The response includes:
+- `status`: Contains the main error code and a general message
+- `errors`: An array of specific validation errors (when applicable)
+- `requestId`: A unique identifier for the request that can be used when contacting support
+
+### Common Error Codes
+
+| Error Code | Description |
+|------------|-------------|
+| AUTHENTICATION_FAILED | The provided authentication signature is invalid |
+| INVALID_REQUEST | The request format is invalid or missing required fields |
+| PAYMENT_FAILED | The payment could not be processed |
+| PAYMENT_DECLINED | The payment was declined by the payment processor |
+| INSUFFICIENT_FUNDS | The payment method has insufficient funds |
+| INVALID_CARD | The provided card information is invalid |
+| EXPIRED_CARD | The provided card has expired |
+| ADDRESS_VERIFICATION_FAILED | The address verification check failed |
+| TAX_CALCULATION_ERROR | Unable to calculate taxes for the given items/address |
+| INVALID_DISCOUNT | The discount code is invalid or expired |
+| PRODUCT_UNAVAILABLE | One or more products in the cart are unavailable |
+| RATE_LIMIT_EXCEEDED | Too many requests in a given time period |
+| INTERNAL_ERROR | An unexpected error occurred on the server |
+
+#### Field-Specific Error Codes
+
+| Error Code | Description |
+|------------|-------------|
+| REQUIRED_FIELD | A required field is missing |
+| INVALID_FORMAT | The field format is invalid |
+| INVALID_VALUE | The field value is invalid |
+| OUT_OF_RANGE | The field value is outside of acceptable range |
+
+#### Example Response (Error)
+```json
+{
+  "status": {
+    "code": "PAYMENT_FAILED",
+    "message": "The payment could not be processed. Please check your payment details and try again."
+  },
+  "errors": [
+    {
+      "field": "payment_method.card.number",
+      "code": "INVALID_CARD",
+      "message": "The card number provided is invalid or not supported."
+    }
+  ],
+  "requestId": "req-7891011-abcd-efgh-1234"
+}
+```
+
+#### Example Validation Error Response
+```json
+{
+  "status": {
+    "code": "INVALID_REQUEST",
+    "message": "The request contains validation errors."
+  },
+  "errors": [
+    {
+      "field": "shippingAddress.postalCode",
+      "code": "INVALID_FORMAT",
+      "message": "The postal code format is invalid for the specified country."
+    },
+    {
+      "field": "email",
+      "code": "INVALID_FORMAT",
+      "message": "Please provide a valid email address."
+    }
+  ],
+  "requestId": "req-1234567-abcd-efgh-5678"
+}
+```
+
+## Rate Limiting
+
+To ensure the stability and performance of the API, rate limits are applied:
+
+- Standard tier: 100 requests per minute
+- Premium tier: 500 requests per minute
+
+When the rate limit is exceeded, the API will return a 429 status code with headers indicating the rate limit and when it will reset:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1616973392
+```
+
+## Versioning
+
+The API uses versioning in the URL path (e.g., `/v1/checkout`). When breaking changes are introduced, a new version will be released.
+
+- All existing versions will be supported for at least 12 months after a new version is released
+- Deprecation notices will be communicated at least 3 months before a version is retired
+
+## Data Types and Formats
+
+- All dates and times are in ISO 8601 format (e.g., `2025-03-27T14:30:00Z`)
+- All monetary amounts are decimal numbers with up to 2 decimal places
+- All country codes use ISO 3166-1 alpha-2 format
+- All currency codes use ISO 4217 format
+
+## Testing
+
+A sandbox environment is available for testing:
+
+```
+https://sandbox-api.example.com/v1
+```
+
+Test API keys and signing keys will be provided for sandbox use.
+
+## Support and Contact Information
+
+For technical support or questions about the API:
+
+- Email: api-support@example.com
+- Developer portal: https://developers.example.com
+- Status page: https://status.example.com
+
+## Changelog
+
+| Date | Version | Description |
+|------|---------|-------------|
+| 2025-03-27 | v1.0.0 | Initial release |
