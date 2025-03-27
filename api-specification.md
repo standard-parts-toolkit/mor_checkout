@@ -676,14 +676,6 @@ https://sandbox-api.example.com/v1
 
 Test API keys and signing keys will be provided for sandbox use.
 
-## Support and Contact Information
-
-For technical support or questions about the API:
-
-- Email: api-support@example.com
-- Developer portal: https://developers.example.com
-- Status page: https://status.example.com
-
 ## Changelog
 
 | Date | Version | Description |
