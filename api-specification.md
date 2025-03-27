@@ -584,14 +584,11 @@ The response includes:
 
 | Error Code | Description |
 |------------|-------------|
-| AUTHENTICATION_FAILED | The provided authentication signature is invalid |
 | INVALID_REQUEST | The request format is invalid or missing required fields |
 | PAYMENT_FAILED | The payment could not be processed |
 | PAYMENT_CANCELLED | The user cancelled the payment process |
 | TAX_CALCULATION_ERROR | Unable to calculate taxes for the given items/address |
 | INVALID_DISCOUNT | The discount code is invalid or expired |
-| PRODUCT_UNAVAILABLE | One or more products in the cart are unavailable |
-| RATE_LIMIT_EXCEEDED | Too many requests in a given time period |
 | INTERNAL_ERROR | An unexpected error occurred on the server |
 
 #### Field-Specific Error Codes
